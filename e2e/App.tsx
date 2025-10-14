@@ -13,7 +13,7 @@ const SAMPLE_RECORDS = [
     id: "alpha",
     baseName: "alpha",
     mimeType: "image/jpeg",
-    size: 321_000,
+    size: 322_000,
   },
   {
     id: "bravo",
