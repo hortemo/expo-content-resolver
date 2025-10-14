@@ -1,0 +1,11 @@
+appId: com.hortemo.contentresolver.e2e
+---
+- launchApp:
+    clearState: true
+- assertVisible:
+    text: "Expo Content Resolver"
+- tapOn:
+    id: "testButton-integration"
+- assertVisible:
+    id: "testStatus-integration"
+    text: "done"

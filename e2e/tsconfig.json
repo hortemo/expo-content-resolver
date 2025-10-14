@@ -1,0 +1,10 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "paths": {
+      "@hortemo/expo-content-resolver": ["../src/index"],
+      "@hortemo/expo-content-resolver/*": ["../src/*"]
+    }
+  }
+}
