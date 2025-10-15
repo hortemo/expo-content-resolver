@@ -99,39 +99,15 @@ class ContentResolverModule : Module() {
           null -> putNull(key)
           is String -> put(key, value)
           is Boolean -> put(key, value)
-          is Number -> putNumber(this, key, value)
+          is Short -> put(key, value)
+          is Int -> put(key, value)
+          is Long -> put(key, value)
+          is Float -> put(key, value)
+          is Double -> put(key, value)
+          is Byte -> put(key, value)
           is ByteArray -> put(key, value)
           else -> throw IllegalArgumentException("Unsupported content value type for key $key: ${value::class.java.name}")
         }
       }
     }
-
-  private fun putNumber(contentValues: ContentValues, key: String, number: Number) {
-    when (number) {
-      is Byte -> contentValues.put(key, number)
-      is Short -> contentValues.put(key, number)
-      is Int -> contentValues.put(key, number)
-      is Long -> contentValues.put(key, number)
-      is Float -> contentValues.put(key, number)
-      is Double -> putDouble(contentValues, key, number)
-      else -> putDouble(contentValues, key, number.toDouble())
-    }
-  }
-
-  private fun putDouble(contentValues: ContentValues, key: String, value: Double) {
-    when {
-      value.isNaN() || value.isInfinite() ->
-        throw IllegalArgumentException("Unsupported numeric value for key $key: $value")
-      value % 1.0 == 0.0 && value <= Long.MAX_VALUE && value >= Long.MIN_VALUE -> {
-        val longValue = value.toLong()
-        if (longValue.toDouble() == value) {
-          contentValues.put(key, longValue)
-        } else {
-          contentValues.put(key, value)
-        }
-      }
-      else -> contentValues.put(key, value)
-    }
-  }
-
 }
