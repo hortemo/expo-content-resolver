@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import React, { useState } from "react";
 import { Button, SafeAreaView, ScrollView, Text, View } from "react-native";
 
 import ContentResolver, {
@@ -17,7 +17,7 @@ const SAMPLE_RECORDS = [
   },
   {
     id: "bravo",
-    baseName: "bravo",
+    baseName: "bravo photo",
     mimeType: "image/jpeg",
     size: 222_000,
   },
@@ -27,221 +27,208 @@ const SAMPLE_RECORDS = [
     mimeType: "image/jpeg",
     size: 198_000,
   },
+  {
+    id: "delta",
+    baseName: "délta-æøå-🙂",
+    mimeType: "image/jpeg",
+    size: 123_000,
+  },
 ] as const;
 
-type TestState = {
+type State = {
   status: "idle" | "running" | "done" | "error";
   error: string | null;
 };
 
-type TestCase = {
-  id: string;
-  label: string;
-  run: () => Promise<string | null>;
-};
+async function runIntegrationTest(): Promise<string | null> {
+  const runId = Date.now();
+  const inserted: Array<{
+    displayName: string;
+    contentUri: string;
+    mimeType: string;
+    size: number;
+  }> = [];
 
-type TestStatusMap = Record<string, TestState>;
+  // Insert and verify by contentUri
+  for (const s of SAMPLE_RECORDS) {
+    const seconds = Math.floor(Date.now() / 1000);
+    const displayName = `${s.baseName}-${runId}.jpg`;
 
-const createInitialStatuses = (cases: TestCase[]): TestStatusMap =>
-  cases.reduce<TestStatusMap>((acc, testCase) => {
-    acc[testCase.id] = { status: "idle", error: null };
-    return acc;
-  }, {} as TestStatusMap);
-
-const createTestCases = (): TestCase[] => [
-  {
-    id: "integration",
-    label: "Insert and query MediaStore",
-    run: async () => {
-      const runId = Date.now();
-      const inserted: Array<{
-        displayName: string;
-        contentUri: string;
-        mimeType: string;
-        size: number;
-      }> = [];
-
-      for (const sample of SAMPLE_RECORDS) {
-        const seconds = Math.floor(Date.now() / 1000);
-        const displayName = `${sample.baseName}-${runId}.jpg`;
-
-        const contentUri = await ContentResolver.insert(
-          EXTERNAL_CONTENT_URI.Images,
-          {
-            [MediaColumns.DISPLAY_NAME]: displayName,
-            [MediaColumns.MIME_TYPE]: sample.mimeType,
-            [MediaColumns.DATE_ADDED]: seconds,
-            [MediaColumns.DATE_MODIFIED]: seconds,
-            relative_path: "Pictures/ExpoContentResolver/",
-            is_pending: 0,
-            [MediaColumns.SIZE]: sample.size,
-          }
-        );
-
-        if (!contentUri) {
-          return `Insert returned null for ${sample.id}`;
-        }
-
-        const rows = await ContentResolver.query(
-          contentUri,
-          [MediaColumns.DISPLAY_NAME],
-          {}
-        );
-
-        if (rows.length !== 1) {
-          return `Inserted row not found for ${sample.id}`;
-        }
-
-        const [row] = rows;
-        if (row[MediaColumns.DISPLAY_NAME] !== displayName) {
-          return `Inserted row display name mismatch for ${sample.id}`;
-        }
-
-        inserted.push({
-          displayName,
-          contentUri,
-          mimeType: sample.mimeType,
-          size: sample.size,
-        });
+    const contentUri = await ContentResolver.insert(
+      EXTERNAL_CONTENT_URI.Images,
+      {
+        [MediaColumns.DISPLAY_NAME]: displayName,
+        [MediaColumns.MIME_TYPE]: s.mimeType,
+        [MediaColumns.DATE_ADDED]: seconds,
+        [MediaColumns.DATE_MODIFIED]: seconds,
+        relative_path: "Pictures/ExpoContentResolver/",
+        is_pending: 0,
+        [MediaColumns.SIZE]: s.size,
       }
+    );
 
-      const metadataRecords = await ContentResolver.query(
-        EXTERNAL_CONTENT_URI.Images,
-        [MediaColumns.DISPLAY_NAME, MediaColumns.MIME_TYPE],
-        {
-          QUERY_ARG_SORT_COLUMNS: [MediaColumns.DATE_ADDED],
-          QUERY_ARG_SORT_DIRECTION: QUERY_SORT_DIRECTION.DESCENDING,
-        }
-      );
+    if (!contentUri) return `Insert returned null for ${s.id}`;
 
-      if (metadataRecords.length === 0) {
-        return "MediaStore metadata query returned no rows";
-      }
+    const rows = await ContentResolver.query(
+      contentUri,
+      [MediaColumns.DISPLAY_NAME],
+      {}
+    );
+    if (rows.length !== 1) return `Inserted row not found for ${s.id}`;
+    if (rows[0][MediaColumns.DISPLAY_NAME] !== displayName)
+      return `Inserted row display name mismatch for ${s.id}`;
 
-      for (const fixture of inserted) {
-        const record = metadataRecords.find(
-          (candidate) =>
-            candidate[MediaColumns.DISPLAY_NAME] === fixture.displayName
-        );
+    inserted.push({
+      displayName,
+      contentUri,
+      mimeType: s.mimeType,
+      size: s.size,
+    });
+  }
 
-        if (!record) {
-          return `Missing ${fixture.displayName} from metadata query`;
-        }
+  // Metadata presence + MIME check
+  const metadata = await ContentResolver.query(
+    EXTERNAL_CONTENT_URI.Images,
+    [MediaColumns.DISPLAY_NAME, MediaColumns.MIME_TYPE],
+    {
+      QUERY_ARG_SORT_COLUMNS: [MediaColumns.DATE_ADDED],
+      QUERY_ARG_SORT_DIRECTION: QUERY_SORT_DIRECTION.DESCENDING,
+    }
+  );
+  if (!metadata.length) return "MediaStore metadata query returned no rows";
 
-        const mime = record[MediaColumns.MIME_TYPE];
-        if (mime && mime !== fixture.mimeType) {
-          return `Unexpected MIME type for ${fixture.displayName}`;
-        }
-      }
+  for (const fx of inserted) {
+    const rec = metadata.find(
+      (r) => r[MediaColumns.DISPLAY_NAME] === fx.displayName
+    );
+    if (!rec) return `Missing ${fx.displayName} from metadata query`;
+    const mime = rec[MediaColumns.MIME_TYPE];
+    if (mime && mime !== fx.mimeType)
+      return `Unexpected MIME type for ${fx.displayName}`;
+  }
 
-      const alphabeticalNames = [...inserted]
-        .map((fixture) => fixture.displayName)
-        .sort((a, b) => a.localeCompare(b));
+  // Name-based ordering + selection
+  const alphabetical = [...inserted]
+    .map((f) => f.displayName)
+    .sort((a, b) => a.localeCompare(b));
+  const selectionIn = `${MediaColumns.DISPLAY_NAME} IN (${alphabetical.map(() => "?").join(", ")})`;
+  const baseArgs: QueryArgs = {
+    QUERY_ARG_SQL_SELECTION: selectionIn,
+    QUERY_ARG_SQL_SELECTION_ARGS: alphabetical,
+    QUERY_ARG_LIMIT: alphabetical.length,
+  };
 
-      const placeholders = alphabeticalNames.map(() => "?").join(", ");
-      const selection = `${MediaColumns.DISPLAY_NAME} IN (${placeholders})`;
+  // Name sort ASC
+  const asc = await ContentResolver.query(
+    EXTERNAL_CONTENT_URI.Images,
+    [MediaColumns.DISPLAY_NAME],
+    {
+      ...baseArgs,
+      QUERY_ARG_SORT_COLUMNS: [MediaColumns.DISPLAY_NAME],
+      QUERY_ARG_SORT_DIRECTION: QUERY_SORT_DIRECTION.ASCENDING,
+    }
+  );
+  if (asc.length !== alphabetical.length)
+    return "Ascending sort query returned unexpected row count";
+  const ascNames = asc.map((r) => r[MediaColumns.DISPLAY_NAME]);
+  for (let i = 0; i < alphabetical.length; i++)
+    if (ascNames[i] !== alphabetical[i]) return "Ascending sort order mismatch";
 
-      const queryArgsBase: QueryArgs = {
-        QUERY_ARG_SQL_SELECTION: selection,
-        QUERY_ARG_SQL_SELECTION_ARGS: alphabeticalNames,
-        QUERY_ARG_SORT_COLUMNS: [MediaColumns.DISPLAY_NAME],
-        QUERY_ARG_LIMIT: alphabeticalNames.length,
-      };
+  // Name sort DESC
+  const desc = await ContentResolver.query(
+    EXTERNAL_CONTENT_URI.Images,
+    [MediaColumns.DISPLAY_NAME],
+    {
+      ...baseArgs,
+      QUERY_ARG_SORT_COLUMNS: [MediaColumns.DISPLAY_NAME],
+      QUERY_ARG_SORT_DIRECTION: QUERY_SORT_DIRECTION.DESCENDING,
+    }
+  );
+  if (desc.length !== alphabetical.length)
+    return "Descending sort query returned unexpected row count";
+  const descNames = desc.map((r) => r[MediaColumns.DISPLAY_NAME]);
+  const expectedDesc = [...alphabetical].reverse();
+  for (let i = 0; i < expectedDesc.length; i++)
+    if (descNames[i] !== expectedDesc[i])
+      return "Descending sort order mismatch";
 
-      const ascendingRecords = await ContentResolver.query(
-        EXTERNAL_CONTENT_URI.Images,
-        [MediaColumns.DISPLAY_NAME],
-        {
-          ...queryArgsBase,
-          QUERY_ARG_SORT_DIRECTION: QUERY_SORT_DIRECTION.ASCENDING,
-        }
-      );
+  // SIZE sort (ASC) within the same IN selection
+  const bySizeAsc = await ContentResolver.query(
+    EXTERNAL_CONTENT_URI.Images,
+    [MediaColumns.DISPLAY_NAME, MediaColumns.SIZE],
+    {
+      ...baseArgs,
+      QUERY_ARG_SORT_COLUMNS: [MediaColumns.SIZE],
+      QUERY_ARG_SORT_DIRECTION: QUERY_SORT_DIRECTION.ASCENDING,
+    }
+  );
+  const sizesSeen = bySizeAsc.map((r) => r[MediaColumns.SIZE]);
+  const sizesExpected = [...inserted].map((f) => f.size).sort((a, b) => a - b);
+  for (let i = 0; i < sizesExpected.length; i++)
+    if (sizesSeen[i] !== sizesExpected[i])
+      return "SIZE ascending sort mismatch";
 
-      if (ascendingRecords.length !== alphabeticalNames.length) {
-        return "Ascending sort query returned unexpected row count";
-      }
+  // LIMIT works (deterministic using DISPLAY_NAME ASC)
+  const limited = await ContentResolver.query(
+    EXTERNAL_CONTENT_URI.Images,
+    [MediaColumns.DISPLAY_NAME],
+    {
+      ...baseArgs,
+      QUERY_ARG_SORT_COLUMNS: [MediaColumns.DISPLAY_NAME],
+      QUERY_ARG_SORT_DIRECTION: QUERY_SORT_DIRECTION.ASCENDING,
+      QUERY_ARG_LIMIT: 2,
+    }
+  );
+  const expectedLimited = alphabetical.slice(0, 2);
+  if (limited.length !== 2) return "LIMIT query did not return 2 rows";
+  const limitedNames = limited.map((r) => r[MediaColumns.DISPLAY_NAME]);
+  if (
+    limitedNames[0] !== expectedLimited[0] ||
+    limitedNames[1] !== expectedLimited[1]
+  )
+    return "LIMIT + sort returned unexpected rows";
 
-      const ascendingNames = ascendingRecords.map(
-        (record) => record[MediaColumns.DISPLAY_NAME]
-      );
+  // LIKE selection (prefix for the 'alpha' record)
+  const likePrefix = `alpha-${runId}%`;
+  const likeRows = await ContentResolver.query(
+    EXTERNAL_CONTENT_URI.Images,
+    [MediaColumns.DISPLAY_NAME],
+    {
+      QUERY_ARG_SQL_SELECTION: `${MediaColumns.DISPLAY_NAME} LIKE ?`,
+      QUERY_ARG_SQL_SELECTION_ARGS: [likePrefix],
+      QUERY_ARG_LIMIT: 5,
+      QUERY_ARG_SORT_COLUMNS: [MediaColumns.DISPLAY_NAME],
+      QUERY_ARG_SORT_DIRECTION: QUERY_SORT_DIRECTION.ASCENDING,
+    }
+  );
+  if (likeRows.length !== 1)
+    return "LIKE selection returned unexpected row count";
+  if (!likeRows[0][MediaColumns.DISPLAY_NAME].startsWith(`alpha-${runId}`))
+    return "LIKE selection mismatch";
 
-      if (
-        ascendingNames.some((name, index) => name !== alphabeticalNames[index])
-      ) {
-        return "Ascending sort order mismatch";
-      }
-
-      const descendingRecords = await ContentResolver.query(
-        EXTERNAL_CONTENT_URI.Images,
-        [MediaColumns.DISPLAY_NAME],
-        {
-          ...queryArgsBase,
-          QUERY_ARG_SORT_DIRECTION: QUERY_SORT_DIRECTION.DESCENDING,
-        }
-      );
-
-      if (descendingRecords.length !== alphabeticalNames.length) {
-        return "Descending sort query returned unexpected row count";
-      }
-
-      const expectedDescending = [...alphabeticalNames].reverse();
-      const descendingNames = descendingRecords.map(
-        (record) => record[MediaColumns.DISPLAY_NAME]
-      );
-
-      if (
-        descendingNames.some(
-          (name, index) => name !== expectedDescending[index]
-        )
-      ) {
-        return "Descending sort order mismatch";
-      }
-
-      return null;
-    },
-  },
-];
+  return null;
+}
 
 const App = (): JSX.Element => {
-  const [statuses, setStatuses] = useState<TestStatusMap>({});
+  const [state, setState] = useState<State>({ status: "idle", error: null });
 
-  const testCases = useMemo(() => createTestCases(), []);
-
-  useEffect(() => {
-    if (testCases.length === 0) {
-      setStatuses({});
-      return;
-    }
-
-    setStatuses(createInitialStatuses(testCases));
-  }, [testCases]);
-
-  const runTest = useCallback(
-    (testCase: TestCase) => async () => {
-      setStatuses((prev) => ({
-        ...prev,
-        [testCase.id]: { status: "running", error: null },
-      }));
-
-      try {
-        const failure = await testCase.run();
-
-        setStatuses((prev) => ({
-          ...prev,
-          [testCase.id]: failure
+  const onRun = () => {
+    setState({ status: "running", error: null });
+    runIntegrationTest()
+      .then((failure) =>
+        setState(
+          failure
             ? { status: "error", error: failure }
-            : { status: "done", error: null },
-        }));
-      } catch (error: unknown) {
-        const message = error instanceof Error ? error.message : String(error);
-        setStatuses((prev) => ({
-          ...prev,
-          [testCase.id]: { status: "error", error: message },
-        }));
-      }
-    },
-    []
-  );
+            : { status: "done", error: null }
+        )
+      )
+      .catch((err) =>
+        setState({
+          status: "error",
+          error: err instanceof Error ? err.message : String(err),
+        })
+      );
+  };
 
   return (
     <SafeAreaView style={{ flex: 1 }}>
@@ -253,47 +240,35 @@ const App = (): JSX.Element => {
           Expo Content Resolver
         </Text>
 
-        {testCases.map((testCase) => {
-          const testState = statuses[testCase.id];
+        <View
+          style={{
+            borderRadius: 12,
+            borderWidth: 1,
+            borderColor: "#d4d4d8",
+            padding: 16,
+            gap: 12,
+          }}
+        >
+          <Text style={{ fontSize: 18, fontWeight: "500" }}>
+            Insert and query MediaStore
+          </Text>
 
-          return (
-            <View
-              key={testCase.id}
-              style={{
-                borderRadius: 12,
-                borderWidth: 1,
-                borderColor: "#d4d4d8",
-                padding: 16,
-                gap: 12,
-              }}
-            >
-              <Text style={{ fontSize: 18, fontWeight: "500" }}>
-                {testCase.label}
-              </Text>
+          <Button
+            title="Run test"
+            onPress={onRun}
+            testID="testButton-integration"
+            accessibilityLabel="Run Insert and query MediaStore"
+            disabled={state.status === "running"}
+          />
 
-              <Button
-                title="Run test"
-                onPress={runTest(testCase)}
-                testID={`testButton-${testCase.id}`}
-                accessibilityLabel={`Run ${testCase.label}`}
-                disabled={testState?.status === "running"}
-              />
+          <Text testID="testStatus-integration">{state.status}</Text>
 
-              <Text testID={`testStatus-${testCase.id}`}>
-                {testState?.status ?? "idle"}
-              </Text>
-
-              {testState?.error ? (
-                <Text
-                  testID={`testError-${testCase.id}`}
-                  style={{ color: "#dc2626" }}
-                >
-                  {testState.error}
-                </Text>
-              ) : null}
-            </View>
-          );
-        })}
+          {state.error ? (
+            <Text testID="testError-integration" style={{ color: "#dc2626" }}>
+              {state.error}
+            </Text>
+          ) : null}
+        </View>
       </ScrollView>
     </SafeAreaView>
   );
